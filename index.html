@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>手機棋盤 Prototype — 丟骰子走格子</title>
+<title>手機棋盤 Prototype — 大富翁</title>
 <!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
@@ -36,7 +36,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>丟骰子走格子（Prototype）</h1>
+    <h1>大富翁（Prototype）</h1>
   </header>
 
   <div class="card" id="lobby">
@@ -193,6 +193,12 @@ async function joinRoom(rid, playerId, playerName, isOwner){
   await playerRef.set(playerObj);
   // ensure presence removal on disconnect
   playerRef.onDisconnect().remove();
+
+  // if this joiner is owner, ensure room.ownerId is set (helps race conditions)
+  if(isOwner){
+    await roomRef.child('ownerId').set(playerId);
+  }
+
   // listen room changes
   roomRef.on('value', snapshot=>{
     localState = snapshot.val();
@@ -222,15 +228,25 @@ function renderRoom(){
   // players
   playersList.innerHTML = '';
   const players = localState.players || {};
-  const order = localState.turnOrder && localState.turnOrder.length ? localState.turnOrder : Object.keys(players);
-  // if turnOrder empty, set it once (owner only)
-  if(order.length === 0 && Object.keys(players).length > 0){
-    // set turnOrder in DB (owner should set, but do optimistic set if no owner)
+
+  // Ensure turnOrder exists and is valid. If missing or empty, create from current players.
+  if(!Array.isArray(localState.turnOrder) || localState.turnOrder.length === 0){
     const ids = Object.keys(players);
-    roomRef.child('turnOrder').set(ids);
-    return;
+    if(ids.length > 0){
+      // write turnOrder once (owner should ideally do this, but set optimistically)
+      roomRef.child('turnOrder').set(ids);
+      // return early; we'll re-render when DB updates
+      return;
+    }
   }
 
+  const turnOrder = localState.turnOrder || [];
+  // ensure currentTurn is a valid number
+  let currentTurn = Number.isInteger(localState.currentTurn) ? localState.currentTurn : 0;
+  if(turnOrder.length === 0) currentTurn = 0;
+  if(currentTurn >= turnOrder.length) currentTurn = 0;
+
+  // render player cards
   for(const pid of Object.keys(players)){
     const p = players[pid];
     const card = document.createElement('div');
@@ -246,7 +262,7 @@ function renderRoom(){
   // draw board pieces
   for(let i=0;i<BOARD_SIZE;i++){
     const cell = document.getElementById('cell-'+i);
-    cell.innerHTML = ''; // clear pieces
+    if(cell) cell.innerHTML = ''; // clear pieces
   }
   for(const pid in players){
     const p = players[pid];
@@ -255,23 +271,23 @@ function renderRoom(){
     el.className = 'piece';
     el.style.background = p.color || '#666';
     el.textContent = p.name[0] || '?';
-    el.title = p.name + (pid===localState.turnOrder?.[localState.currentTurn] ? ' (當前回合)' : '');
-    document.getElementById('cell-'+pos).appendChild(el);
+    el.title = p.name + (pid===turnOrder[currentTurn] ? ' (當前回合)' : '');
+    const container = document.getElementById('cell-'+pos);
+    if(container) container.appendChild(el);
   }
 
   // dice & turn UI
-  const currentPlayerId = localState.turnOrder ? localState.turnOrder[localState.currentTurn] : null;
+  const currentPlayerId = turnOrder.length ? turnOrder[currentTurn] : null;
   const isMyTurn = currentPlayerId === myId;
   rollBtn.disabled = !isMyTurn || !localState.started;
   endTurnBtn.disabled = !isMyTurn || !localState.started;
 
   diceDisplay.textContent = '擲骰結果：' + (localState.lastAction?.dice ?? '—');
-  setLog(localState.started ? `輪到 ${players[currentPlayerId]?.name || 'N/A'}（id:${currentPlayerId}）` : '等待房主開始遊戲');
+  setLog(localState.started ? `輪到 ${players[currentPlayerId]?.name || 'N/A'}（id:${currentPlayerId || 'null'}）` : '等待房主開始遊戲');
 
   // start button for owner
   startWrap.innerHTML = '';
-  // owner detection: first player in list is owner if flagged, else the earliest joined
-  const ownerId = Object.values(players).find(p => p.isOwner)?.id || Object.keys(players)[0];
+  const ownerId = localState.ownerId || Object.values(players).find(p => p.isOwner)?.id || Object.keys(players)[0];
   if(ownerId === myId && !localState.started && Object.keys(players).length > 1){
     const btn = document.createElement('button');
     btn.textContent = '開始遊戲';
@@ -289,23 +305,35 @@ function renderRoom(){
 /* ---------- gameplay actions ---------- */
 rollBtn.addEventListener('click', async ()=>{
   if(!localState) return;
-  const currentPlayerId = localState.turnOrder[localState.currentTurn];
+  const currentPlayerId = localState.turnOrder?.[localState.currentTurn];
   if(currentPlayerId !== myId) return alert('現在不是你的回合');
-  // simple protection: prevents double-roll by same player if lastAction stamp belonged to same turn
+
+  // 擲骰並寫入 lastAction
   const dice = Math.floor(Math.random()*6)+1;
-  // write lastAction, then move
   const action = {type:'roll', by: myId, dice, ts: now()};
   await roomRef.child('lastAction').set(action);
-  // move player
+
+  // 移動玩家位置
   const playerPath = 'players/' + myId;
   const snap = await roomRef.child(playerPath).once('value');
   const p = snap.val();
   const oldPos = p?.pos || 0;
   const newPos = Math.min(BOARD_SIZE-1, oldPos + dice);
   await roomRef.child(playerPath+'/pos').set(newPos);
-  // if reached end -> game over marker
+
+  // 若到達終點，寫入 winner 並結束（不再自動輪下一位）
   if(newPos >= BOARD_SIZE-1){
     await roomRef.child('winner').set({id: myId, name: p.name, at: now()});
+    return;
+  }
+
+  // 自動將 currentTurn 原子性地移到下一位玩家
+  const total = (localState.turnOrder?.length) || 0;
+  if(total > 0){
+    await roomRef.child('currentTurn').transaction(curr=>{
+      const nowCurr = Number.isInteger(curr) ? curr : 0;
+      return (nowCurr + 1) % total;
+    });
   }
 });
 
