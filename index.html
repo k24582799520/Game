@@ -305,8 +305,14 @@ function renderRoom(){
 /* ---------- gameplay actions ---------- */
 rollBtn.addEventListener('click', async ()=>{
   if(!localState) return;
-  const currentPlayerId = localState.turnOrder?.[localState.currentTurn];
+  const expectedCurrent = Number.isInteger(localState.currentTurn) ? localState.currentTurn : 0;
+  const turnOrder = localState.turnOrder || [];
+  const currentPlayerId = turnOrder[expectedCurrent];
   if(currentPlayerId !== myId) return alert('現在不是你的回合');
+
+  // disable UI immediately to prevent multiple clicks
+  rollBtn.disabled = true;
+  endTurnBtn.disabled = true;
 
   // 擲骰並寫入 lastAction
   const dice = Math.floor(Math.random()*6)+1;
@@ -327,11 +333,13 @@ rollBtn.addEventListener('click', async ()=>{
     return;
   }
 
-  // 自動將 currentTurn 原子性地移到下一位玩家
-  const total = (localState.turnOrder?.length) || 0;
+  // 自動將 currentTurn 原子性地移到下一位玩家，但僅在 DB 中的 currentTurn 與我們預期相同時才推進一次
+  const total = turnOrder.length || 0;
   if(total > 0){
     await roomRef.child('currentTurn').transaction(curr=>{
       const nowCurr = Number.isInteger(curr) ? curr : 0;
+      // 若已被其他人或另一個執行緒改動，則不重複推進
+      if(nowCurr !== expectedCurrent) return curr;
       return (nowCurr + 1) % total;
     });
   }
