@@ -13,7 +13,7 @@
   .wrap{max-width:900px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:12px}
   header{display:flex;align-items:center;gap:12px}
   h1{font-size:18px;margin:0}
-  .card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 6px 20px rgba(12,15,30,0.06)}
+  .card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 6px 20px rgba(12,15,30,0.06); position:relative;}
   .row{display:flex;gap:8px;align-items:center}
   input[type=text]{flex:1;padding:10px;border-radius:8px;border:1px solid #eee}
   button{background:var(--accent);color:white;border:none;padding:10px 12px;border-radius:8px;font-weight:600}
@@ -27,6 +27,19 @@
   .players{display:flex;gap:8px;overflow:auto;padding:6px}
   .playerCard{background:#f2f5ff;padding:8px;border-radius:8px;min-width:100px}
   .small{font-size:12px;color:var(--muted)}
+  .rematchBtn{
+    position:absolute;
+    right:12px;
+    bottom:12px;
+    z-index:20;
+    background:#10b981;
+    border-radius:8px;
+    padding:8px 12px;
+    color:white;
+    font-weight:700;
+    box-shadow:0 6px 18px rgba(16,185,129,0.18);
+    border:none;
+  }
   @media (max-width:420px){
     .cell{min-height:48px}
     .piece{width:24px;height:24px;font-size:12px}
@@ -70,6 +83,8 @@
     <div style="margin-top:8px" class="log" id="log">遊戲尚未開始</div>
     <div style="margin-top:8px" class="small">提示：建立房間後，第一個加入的人為房主。房主按 <b>開始遊戲</b>（會在玩家數>1時顯示）即可開始。</div>
     <div style="margin-top:8px" id="startWrap"></div>
+    <!-- 再來一場按鈕（只顯示給房主，遊戲結束時出現） -->
+    <button id="rematchBtn" class="rematchBtn" style="display:none">再來一場</button>
   </div>
 
 </div>
@@ -120,6 +135,7 @@ const rollBtn = document.getElementById("rollBtn");
 // const endTurnBtn = document.getElementById("endTurnBtn"); // 已移除
 const logEl = document.getElementById("log");
 const startWrap = document.getElementById("startWrap");
+const rematchBtn = document.getElementById("rematchBtn");
 
 /* ---------- state ---------- */
 let roomId = null;
@@ -138,14 +154,39 @@ function uid(len=6){
 function now(){ return Date.now(); }
 function setLog(txt){ logEl.textContent = txt; }
 
-/* ---------- build board UI ---------- */
+// 可在這裡直接編輯 1~20 格子的文字（程式端清單）
+const LABELS = [
+  "1號格子",
+  "2號格子",
+  "3號格子",
+  "4號格子",
+  "5號格子",
+  "6號格子",
+  "7號格子",
+  "8號格子",
+  "9號格子",
+  "10號格子",
+  "11號格子",
+  "12號格子",
+  "13號格子",
+  "14號格子",
+  "15號格子",
+  "16號格子",
+  "17號格子",
+  "18號格子",
+  "19號格子",
+  "20號格子"
+];
+
+// 用程式端 LABELS 清單來填入格子文字（不提供畫面編輯器）
 function buildBoard(){
   boardEl.innerHTML = "";
   for(let i=0;i<BOARD_SIZE;i++){
     const c = document.createElement("div");
     c.className = "cell";
     c.dataset.idx = i;
-    c.innerHTML = `<div class="idx">${i+1}</div><div class="pieces" id="cell-${i}"></div>`;
+    const label = LABELS[i] || "";
+    c.innerHTML = `<div class="idx">${i+1}</div><div class="pieces" id="cell-${i}"></div><div class="cellLabel">${label}</div>`;
     boardEl.appendChild(c);
   }
 }
@@ -320,6 +361,12 @@ function renderRoom(){
     startWrap.appendChild(btn);
   }
 
+  // 顯示/隱藏「再來一場」按鈕：當房間有 winner 且當前使用者為房主時顯示
+  if(localState.winner && ownerId === myId){
+    rematchBtn.style.display = 'inline-block';
+  } else {
+    rematchBtn.style.display = 'none';
+  }
   // if game not started, disable roll
   if(!localState.started) {
     rollBtn.disabled = true;
@@ -375,6 +422,35 @@ rollBtn.addEventListener('click', async ()=>{
       return (nowCurr + 1) % total;
     });
     // 若 transaction 未成功提交（res.committed === false），表示已被他人改過，正常不必再處理
+  }
+});
+
+// 房主按下「再來一場」：重置玩家位置、turnOrder、currentTurn、lastAction、winner，並啟動遊戲
+rematchBtn.addEventListener('click', async ()=>{
+  if(!roomRef || !localState) return;
+  const ownerId = localState.ownerId || Object.values(localState.players || {}).find(p => p.isOwner)?.id || Object.keys(localState.players || {})[0];
+  if(ownerId !== myId) return alert('只有房主可以重新開始遊戲');
+
+  // 讀取目前玩家列表
+  const snap = await roomRef.child('players').once('value');
+  const players = snap.val() || {};
+  const ids = Object.keys(players);
+
+  // 建立要寫入 DB 的更新物件
+  const updates = {};
+  ids.forEach(pid=>{
+    updates[`players/${pid}/pos`] = 0;
+  });
+  updates['lastAction'] = null;
+  updates['winner'] = null;
+  updates['started'] = true;
+  updates['turnOrder'] = ids;
+  updates['currentTurn'] = 0;
+
+  try{
+    await roomRef.update(updates);
+  }catch(e){
+    alert('重新開始失敗：' + e.message);
   }
 });
 
