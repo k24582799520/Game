@@ -116,6 +116,41 @@
     .piece{width:24px;height:24px;font-size:12px}
     :root{--dice-size:76px;}
   }
+
+  /* pending modal (覆蓋在 game card 內) */
+  .pendingModal{
+    display:none;
+    position:absolute;
+    inset:0;
+    align-items:center;
+    justify-content:center;
+    z-index:60;
+    pointer-events:none;
+  }
+  .pendingModal.show{
+    display:flex;
+    pointer-events:auto;
+  }
+  .pendingBox{
+    width: min(520px, 86%);
+    background:#fff;
+    border-radius:12px;
+    padding:20px;
+    box-shadow:0 18px 50px rgba(2,6,23,0.18);
+    text-align:center;
+  }
+  .pendingLabel{
+    font-size:20px;
+    font-weight:800;
+    color:#111;
+    line-height:1.3;
+    margin-bottom:18px;
+    word-break:break-word;
+  }
+  .pendingActions{ display:flex; gap:12px; justify-content:center; }
+  .pendingActions button{ padding:10px 14px; border-radius:8px; border:none; font-weight:700 }
+  .btn-cancel{ background:#9ca3af; color:#fff }
+  .btn-confirm{ background:#3b82f6; color:#fff }
 </style>
 </head>
 <body>
@@ -213,6 +248,17 @@
     <div style="margin-top:8px" id="startWrap"></div>
     <!-- 再來一場按鈕（只顯示給房主，遊戲結束時出現） -->
     <button id="rematchBtn" class="rematchBtn" style="display:none">再來一場</button>
+
+    <!-- pending action modal（顯示格子大字與完成按鈕） -->
+    <div id="pendingModal" class="pendingModal" aria-hidden="true">
+      <div class="pendingBox" role="dialog" aria-modal="true">
+        <div id="pendingLabel" class="pendingLabel">格子內容</div>
+        <div class="pendingActions">
+          <button id="pendingCancel" class="btn-cancel" style="display:none">取消</button>
+          <button id="pendingConfirm" class="btn-confirm">完成</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Dice overlay element -->
@@ -274,12 +320,134 @@ const rematchBtn = document.getElementById("rematchBtn");
 const diceOverlay = document.getElementById("diceOverlay");
 const diceResult = document.getElementById("diceResult");
 
-/* ---------- state ---------- */
-let roomId = null;
-let myId = null;
-let myName = null;
-let roomRef = null;
-let localState = null; // mirror of room state
+// new: pending modal elements
+const pendingModal = document.getElementById('pendingModal');
+const pendingLabel = document.getElementById('pendingLabel');
+const pendingConfirm = document.getElementById('pendingConfirm');
+const pendingCancel = document.getElementById('pendingCancel');
+
+// renderRoom: 顯示/隱藏 pending modal 與按鈕狀態
+function renderRoom(){
+  // players
+  playersList.innerHTML = '';
+  const players = localState.players || {};
+
+  // Ensure turnOrder exists and is valid. If missing or empty, create from current players.
+  if(!Array.isArray(localState.turnOrder) || localState.turnOrder.length === 0){
+    const ids = Object.keys(players);
+    if(ids.length > 0){
+      // write turnOrder once (owner should ideally do this, but set optimistically)
+      roomRef.child('turnOrder').set(ids);
+      // return early; we'll re-render when DB updates
+      return;
+    }
+  }
+
+  const turnOrder = localState.turnOrder || [];
+  // ensure currentTurn is a valid number
+  let currentTurn = Number.isInteger(localState.currentTurn) ? localState.currentTurn : 0;
+  if(turnOrder.length === 0) currentTurn = 0;
+  if(currentTurn >= turnOrder.length) currentTurn = 0;
+
+  // render player cards
+  for(const pid of Object.keys(players)){
+    const p = players[pid];
+    const card = document.createElement('div');
+    card.className = 'playerCard';
+    card.style.borderLeft = `4px solid ${p.color || '#ccc'}`;
+    const meMark = pid === myId ? '（你）' : '';
+    // 僅顯示玩家名稱與是否為自己，隱藏位置與 id
+    card.innerHTML = `<div style="font-weight:700">${p.name} ${meMark}</div>`;
+    playersList.appendChild(card);
+  }
+
+  // draw board pieces
+  for(let i=0;i<BOARD_SIZE;i++){
+    const cell = document.getElementById('cell-'+i);
+    if(cell) cell.innerHTML = ''; // clear pieces
+  }
+  for(const pid in players){
+    const p = players[pid];
+    const pos = Math.max(0, Math.min(BOARD_SIZE-1, p.pos || 0));
+    const el = document.createElement('div');
+    el.className = 'piece';
+    // allow animation to identify which piece belongs to誰
+    el.dataset.pid = pid;
+    el.style.background = p.color || '#666';
+    el.textContent = p.name[0] || '?';
+    el.title = p.name + (pid===turnOrder[currentTurn] ? ' (當前回合)' : '');
+    const container = document.getElementById('cell-'+pos);
+    if(container) container.appendChild(el);
+  }
+
+  // dice & turn UI
+  const currentPlayerId = turnOrder.length ? turnOrder[currentTurn] : null;
+  const isMyTurn = currentPlayerId === myId;
+  rollBtn.disabled = !isMyTurn || !localState.started;
+  // endTurnBtn.disabled = !isMyTurn || !localState.started; // 已移除
+
+  diceDisplay.textContent = '擲骰結果：' + (localState.lastAction?.dice ?? '—');
+  // 只顯示名稱，不顯示 id
+  setLog(localState.started ? `輪到 ${players[currentPlayerId]?.name || 'N/A'}` : '等待房主開始遊戲');
+
+  // start button for owner
+  startWrap.innerHTML = '';
+  const ownerId = localState.ownerId || Object.values(players).find(p => p.isOwner)?.id || Object.keys(players)[0];
+  if(ownerId === myId && !localState.started && Object.keys(players).length > 1){
+    const btn = document.createElement('button');
+    btn.textContent = '開始遊戲';
+    btn.onclick = async ()=>{
+      // ensure turnOrder initialized from current players, then start
+      const snap = await roomRef.child('players').once('value');
+      const ps = snap.val() || {};
+      const ids = Object.keys(ps);
+      if(ids.length > 0){
+        await roomRef.update({ started: true, turnOrder: ids, currentTurn: 0 });
+      } else {
+        await roomRef.child('started').set(true);
+      }
+    };
+    startWrap.appendChild(btn);
+  }
+
+  // 顯示/隱藏「再來一場」按鈕：當房間有 winner 且當前使用者為房主時顯示
+  if(localState.winner && ownerId === myId){
+    rematchBtn.style.display = 'inline-block';
+  } else {
+    rematchBtn.style.display = 'none';
+  }
+  // if game not started, disable roll
+  if(!localState.started) {
+    rollBtn.disabled = true;
+    // endTurnBtn.disabled = true; // 已移除
+  }
+
+  // disable rollBtn if pendingAction exists or not your turn
+  const pending = localState.pendingAction || null;
+  const isPending = !!pending;
+  rollBtn.disabled = (!isMyTurn) || !localState.started || isPending;
+
+  // show pending modal if pendingAction present
+  if(pending){
+    // show big label text from LABELS (use pending.cell as index)
+    const idx = Number.isInteger(pending.cell) ? pending.cell : null;
+    const labelText = (idx !== null && LABELS[idx]) ? LABELS[idx] : `第 ${idx+1} 格`;
+    pendingLabel.textContent = labelText;
+    // only the player who triggered can confirm
+    if(pending.by === myId){
+      pendingConfirm.style.display = 'inline-block';
+      pendingConfirm.disabled = false;
+      pendingCancel.style.display = 'none';
+    } else {
+      // others see modal but cannot confirm
+      pendingConfirm.style.display = 'none';
+      pendingCancel.style.display = 'none';
+    }
+    pendingModal.classList.add('show');
+  } else {
+    pendingModal.classList.remove('show');
+  }
+}
 
 /* ---------- helpers ---------- */
 function uid(len=6){
@@ -294,24 +462,24 @@ function setLog(txt){ logEl.textContent = txt; }
 // 可在這裡直接編輯 1~20 格子的文字（程式端清單）
 const LABELS = [
   "起點",
-  "1號格子",
-  "2號格子",
-  "3號格子",
-  "4號格子",
-  "5號格子",
-  "6號格子",
-  "7號格子",
-  "8號格子",
-  "9號格子",
-  "10號格子",
-  "11號格子",
-  "12號格子",
-  "13號格子",
-  "14號格子",
-  "15號格子",
-  "16號格子",
-  "17號格子",
-  "18號格子",
+  "三個字",
+  "有四個字",
+  "這邊五個字",
+  "測試六個字長",
+  "這是七個字長度",
+  "一二三四五六七八",
+  "一二三四五六七八九",
+  "一二三四五六七八九十",
+  "一二三四五六七八九十一",
+  "一二三四五六七八九十一二",
+  "一二三四五六七八九十一二三",
+  "一二三四五六七八九十一二三四",
+  "一二三四五六七八九十一二三四五",
+  "一二三四五六七八九十一二三四五六",
+  "一二三四五六七八九十一二三四五六七",
+  "一二三四五六七八九十一二三四五六七八",
+  "一二三四五六七八九十一二三四五六七八九",
+  "一二三四五六七八九十一二三四五六七八九十",
   "19號格子",
   "20號格子",
   "21號格子",
@@ -549,6 +717,32 @@ function renderRoom(){
     rollBtn.disabled = true;
     // endTurnBtn.disabled = true; // 已移除
   }
+
+  // disable rollBtn if pendingAction exists or not your turn
+  const pending = localState.pendingAction || null;
+  const isPending = !!pending;
+  rollBtn.disabled = (!isMyTurn) || !localState.started || isPending;
+
+  // show pending modal if pendingAction present
+  if(pending){
+    // show big label text from LABELS (use pending.cell as index)
+    const idx = Number.isInteger(pending.cell) ? pending.cell : null;
+    const labelText = (idx !== null && LABELS[idx]) ? LABELS[idx] : `第 ${idx+1} 格`;
+    pendingLabel.textContent = labelText;
+    // only the player who triggered can confirm
+    if(pending.by === myId){
+      pendingConfirm.style.display = 'inline-block';
+      pendingConfirm.disabled = false;
+      pendingCancel.style.display = 'none';
+    } else {
+      // others see modal but cannot confirm
+      pendingConfirm.style.display = 'none';
+      pendingCancel.style.display = 'none';
+    }
+    pendingModal.classList.add('show');
+  } else {
+    pendingModal.classList.remove('show');
+  }
 }
 
 /* ---------- gameplay actions ---------- */
@@ -624,33 +818,21 @@ rollBtn.addEventListener('click', async ()=>{
     const oldPos = p?.pos || 0;
     const targetPos = Math.min(BOARD_SIZE-1, oldPos + dice);
 
-    // perform local step-by-step animation then persist final pos
+    // perform local step-by-step animation then persist each step (animatePlayerSteps will set pendingAction at the end)
     await animatePlayerSteps(myId, oldPos, dice);
 
-    // check winner after move
+    // If reached final cell, set winner (no automatic turn advance here)
     if(targetPos >= BOARD_SIZE-1){
       await roomRef.child('winner').set({id: myId, name: p.name, at: now()});
       return;
     }
 
-    // 讀取最新版 turnOrder 並以 transaction 原子推進 currentTurn
-    const latestOrderSnap = await roomRef.child('turnOrder').once('value');
-    const latestOrder = latestOrderSnap.val() || [];
-    const total = latestOrder.length || 0;
-    if(total > 0){
-      await roomRef.child('currentTurn').transaction(curr=>{
-        const nowCurr = Number.isInteger(curr) ? curr : 0;
-        const currPid = latestOrder[nowCurr] || null;
-        if(currPid !== myId) return curr;
-        return (nowCurr + 1) % total;
-      });
-    }
+    // NOTE: 不在此自動推進 currentTurn，改由 pendingConfirm（玩家按完成）來推進
   }catch(err){
     console.error('擲骰處理失敗', err);
     alert('擲骰失敗：' + (err.message || err));
   }finally{
-    // UI will be re-enabled by renderRoom when currentTurn changes,
-    // ensure rollBtn re-enabled if something went wrong
+    // UI will remain disabled while pendingAction exists; ensure button state consistent on errors
     rollBtn.disabled = !localState?.started;
   }
 });
@@ -750,8 +932,8 @@ async function animatePlayerSteps(pid, fromIdx, steps){
   let cur = fromIdx;
   for(let i=1;i<=steps;i++){
     const next = Math.min(BOARD_SIZE-1, fromIdx + i);
-    // animate one cell move (0.5s) then pause 0.2s
-    await animatePieceStep(pid, cur, next, 500, 200);
+    // animate one cell move (0.3s) then pause 0.1s
+    await animatePieceStep(pid, cur, next, 300, 100);
 
     // 同步此一步到 DB，讓其他玩家看到逐步更新
     try{
@@ -762,7 +944,13 @@ async function animatePlayerSteps(pid, fromIdx, steps){
 
     cur = next;
   }
-  // 最終位置已在最後一步同步過，不再重複寫入
+
+  // after finishing movement, create pendingAction so the player must confirm
+  try{
+    await roomRef.child('pendingAction').set({ by: pid, cell: cur, ts: now() });
+  }catch(e){
+    console.warn('failed to set pendingAction', e);
+  }
 }
 
 /* ---------- room cleanup ---------- */
@@ -816,6 +1004,48 @@ db.ref().child('rooms').on('child_changed', snap=>{
   if(val && val.winner){
     alert('遊戲結束！得勝者：' + val.winner.name);
   }
+});
+
+// pending confirm handler: only the landing player can confirm, then advance turn
+pendingConfirm.addEventListener('click', async ()=>{
+  if(!roomRef || !localState) return;
+  const pending = localState.pendingAction;
+  if(!pending) return;
+  if(pending.by !== myId) return alert('只有落在該格的玩家可以按完成。');
+
+  // clear pendingAction first
+  try{
+    await roomRef.child('pendingAction').set(null);
+  }catch(e){
+    console.warn('failed to clear pendingAction', e);
+  }
+
+  // if game already has winner, do not advance turn
+  if(localState.winner) return;
+
+  // advance currentTurn atomically
+  try{
+    const latestOrderSnap = await roomRef.child('turnOrder').once('value');
+    const latestOrder = latestOrderSnap.val() || [];
+    const total = latestOrder.length || 0;
+    if(total > 0){
+      await roomRef.child('currentTurn').transaction(curr=>{
+        const nowCurr = Number.isInteger(curr) ? curr : 0;
+        return (nowCurr + 1) % total;
+      });
+    }
+  }catch(e){
+    console.warn('failed to advance turn', e);
+  }
+});
+
+// optional: allow owner cancel pending (if you want a cancel flow), currently hide cancel
+pendingCancel.addEventListener('click', async ()=>{
+  // optional admin cancel path - left disabled in UI
+  if(!roomRef || !localState) return;
+  const ownerId = localState.ownerId;
+  if(ownerId !== myId) return alert('只有房主可以取消等待。');
+  try{ await roomRef.child('pendingAction').set(null); }catch(e){ console.warn(e); }
 });
 </script>
 </body>
