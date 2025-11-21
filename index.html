@@ -40,9 +40,81 @@
     box-shadow:0 6px 18px rgba(16,185,129,0.18);
     border:none;
   }
+
+  /* 3D Dice styles */
+  :root{--dice-size:96px;}
+  #diceOverlay{
+    display:none;
+    position:absolute;
+    inset:0;
+    background:rgba(0,0,0,0.12);
+    align-items:center;
+    justify-content:center;
+    z-index:40;
+    pointer-events:none;
+  }
+  #diceOverlay.show{ display:flex; pointer-events:auto; }
+  .scene{ width:var(--dice-size); height:var(--dice-size); perspective:800px; }
+  .cube{
+    width:100%; height:100%;
+    position:relative;
+    transform-style:preserve-3d;
+    transition: transform 0.7s cubic-bezier(.2,.8,.25,1);
+  }
+  .cube.rolling{ animation:spin 0.12s linear infinite; }
+  @keyframes spin{
+    0%{ transform: rotateX(0deg) rotateY(0deg) }
+    100%{ transform: rotateX(360deg) rotateY(360deg) }
+  }
+  .face{
+    position:absolute; width:100%; height:100%;
+    display:flex; align-items:center; justify-content:center;
+    backface-visibility:hidden;
+    background:#fff; border-radius:10px; box-shadow:0 8px 24px rgba(2,6,23,0.12);
+  }
+  .face .pips{
+    /* 縮小整個點點網格比例，避免超出骰子面 */
+    width:60%;
+    height:60%;
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    grid-auto-rows:1fr;
+    gap:4px;
+    align-items:stretch;
+    justify-items:stretch;
+    margin:auto;
+  }
+  .face .pips .cell{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    height:100%;
+    min-height:0;      /* 取消全域 .cell 的 min-height 影響 */
+    box-sizing:border-box;
+    background: transparent; /* 讓它透出 .face 的白色背景 */
+    border-radius:8px; /* 小圓角，與骰面呼應 */
+    padding:0;
+  }
+  .face .pips .dot{
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    background:#111;
+    display:block;
+  }
+  /* face positions */
+  .face.f1{ transform: translateZ(calc(var(--dice-size)/2)); }
+  .face.f6{ transform: rotateY(180deg) translateZ(calc(var(--dice-size)/2)); }
+  .face.f3{ transform: rotateY(90deg) translateZ(calc(var(--dice-size)/2)); }
+  .face.f4{ transform: rotateY(-90deg) translateZ(calc(var(--dice-size)/2)); }
+  .face.f2{ transform: rotateX(90deg) translateZ(calc(var(--dice-size)/2)); }
+  .face.f5{ transform: rotateX(-90deg) translateZ(calc(var(--dice-size)/2)); }
+
   @media (max-width:420px){
     .cell{min-height:48px}
     .piece{width:24px;height:24px;font-size:12px}
+    :root{--dice-size:76px;}
   }
 </style>
 </head>
@@ -74,6 +146,62 @@
 
     <div style="margin-top:10px" class="board" id="board"></div>
 
+    <!-- Dice 3D overlay (single element inside gameUI) -->
+    <div id="diceOverlay" aria-hidden="true">
+      <div class="scene" aria-hidden="true">
+        <div class="cube rolling" id="diceCube" style="transform: rotateX(0deg) rotateY(0deg);">
+          <!-- front = 1 -->
+          <div class="face f1" data-face="1">
+            <div class="pips">
+              <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+              <div class="cell"></div><div class="cell"><span class="dot"></span></div><div class="cell"></div>
+              <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+            </div>
+          </div>
+          <!-- back = 6 -->
+          <div class="face f6" data-face="6">
+            <div class="pips">
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+            </div>
+          </div>
+          <!-- right = 3 -->
+          <div class="face f3" data-face="3">
+            <div class="pips">
+              <div class="cell"></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+              <div class="cell"></div><div class="cell"><span class="dot"></span></div><div class="cell"></div>
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"></div>
+            </div>
+          </div>
+          <!-- left = 4 -->
+          <div class="face f4" data-face="4">
+            <div class="pips">
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+              <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+            </div>
+          </div>
+          <!-- top = 2 -->
+          <div class="face f2" data-face="2">
+            <div class="pips">
+              <div class="cell"></div><div class="cell"><span class="dot"></span></div><div class="cell"></div>
+              <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+              <div class="cell"></div><div class="cell"><span class="dot"></span></div><div class="cell"></div>
+            </div>
+          </div>
+          <!-- bottom = 5 -->
+          <div class="face f5" data-face="5">
+            <div class="pips">
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+              <div class="cell"></div><div class="cell"><span class="dot"></span></div><div class="cell"></div>
+              <div class="cell"><span class="dot"></span></div><div class="cell"></div><div class="cell"><span class="dot"></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="controls">
       <div id="diceDisplay" class="log">擲骰結果：—</div>
       <button id="rollBtn">擲骰子</button>
@@ -85,6 +213,11 @@
     <div style="margin-top:8px" id="startWrap"></div>
     <!-- 再來一場按鈕（只顯示給房主，遊戲結束時出現） -->
     <button id="rematchBtn" class="rematchBtn" style="display:none">再來一場</button>
+  </div>
+
+  <!-- Dice overlay element -->
+  <div id="diceOverlay">
+    <div class="diceBox" id="diceResult">🎲</div>
   </div>
 
 </div>
@@ -136,6 +269,8 @@ const rollBtn = document.getElementById("rollBtn");
 const logEl = document.getElementById("log");
 const startWrap = document.getElementById("startWrap");
 const rematchBtn = document.getElementById("rematchBtn");
+const diceOverlay = document.getElementById("diceOverlay");
+const diceResult = document.getElementById("diceResult");
 
 /* ---------- state ---------- */
 let roomId = null;
@@ -375,6 +510,49 @@ function renderRoom(){
 }
 
 /* ---------- gameplay actions ---------- */
+// helper: animate dice and show final face (3D cube)
+function animateDiceAndShow(face){
+  return new Promise(resolve=>{
+    const overlay = document.getElementById('diceOverlay');
+    const cube = document.getElementById('diceCube');
+    if(!overlay || !cube){
+      setTimeout(()=>resolve(face), 800);
+      return;
+    }
+
+    // mapping dice face -> cube transform (bring that face to front)
+    const faceTransforms = {
+      1: 'rotateX(0deg) rotateY(0deg)',        // front
+      2: 'rotateX(-90deg) rotateY(0deg)',      // top -> bring front
+      3: 'rotateX(0deg) rotateY(-90deg)',      // right
+      4: 'rotateX(0deg) rotateY(90deg)',       // left
+      5: 'rotateX(90deg) rotateY(0deg)',       // bottom
+      6: 'rotateX(0deg) rotateY(180deg)'       // back
+    };
+
+    // show overlay, start rolling animation
+    overlay.classList.add('show');
+    cube.classList.add('rolling');
+
+    // small visual jitter before final settle
+    const rollingMs = 1200;
+    setTimeout(()=>{
+      // stop rolling and set final transform
+      cube.classList.remove('rolling');
+      cube.style.transform = faceTransforms[face] || faceTransforms[1];
+      // ensure transition finishes then hide overlay
+      const settleMs = 1500;
+      setTimeout(()=>{
+        overlay.classList.remove('show');
+        // reset transform slightly after hide so next roll starts from neutral
+        setTimeout(()=>{ cube.style.transform = 'rotateX(0deg) rotateY(0deg)'; }, 200);
+        resolve(face);
+      }, settleMs);
+    }, rollingMs);
+  });
+}
+
+// 替換原本的 rollBtn 事件處理器：先驗證回合 -> 撥放動畫 -> 寫 DB
 rollBtn.addEventListener('click', async ()=>{
   if(!localState) return;
 
@@ -387,41 +565,49 @@ rollBtn.addEventListener('click', async ()=>{
 
   // disable UI immediately to prevent multiple clicks
   rollBtn.disabled = true;
-  // endTurnBtn.disabled = true; // 已移除
 
-  // 擲骰並寫入 lastAction
+  // 預先產生點數，然後播動畫顯示（動畫結束後才把結果寫入 DB）
   const dice = Math.floor(Math.random()*6)+1;
-  const action = {type:'roll', by: myId, dice, ts: now()};
-  await roomRef.child('lastAction').set(action);
+  try{
+    await animateDiceAndShow(dice);
 
-  // 移動玩家位置
-  const playerPath = 'players/' + myId;
-  const snap = await roomRef.child(playerPath).once('value');
-  const p = snap.val();
-  const oldPos = p?.pos || 0;
-  const newPos = Math.min(BOARD_SIZE-1, oldPos + dice);
-  await roomRef.child(playerPath+'/pos').set(newPos);
+    // 寫 lastAction
+    const action = {type:'roll', by: myId, dice, ts: now()};
+    await roomRef.child('lastAction').set(action);
 
-  // 若到達終點，寫入 winner 並結束（不再自動輪下一位）
-  if(newPos >= BOARD_SIZE-1){
-    await roomRef.child('winner').set({id: myId, name: p.name, at: now()});
-    return;
-  }
+    // 移動玩家位置
+    const playerPath = 'players/' + myId;
+    const snap = await roomRef.child(playerPath).once('value');
+    const p = snap.val();
+    const oldPos = p?.pos || 0;
+    const newPos = Math.min(BOARD_SIZE-1, oldPos + dice);
+    await roomRef.child(playerPath+'/pos').set(newPos);
 
-  // 讀取最新版 turnOrder（再次保險）並以 transaction 原子推進 currentTurn，
-  // transaction 內檢查伺服器端的 currentTurn 指向的 player id 確實是我們要結束回合的人
-  const latestOrderSnap = await roomRef.child('turnOrder').once('value');
-  const latestOrder = latestOrderSnap.val() || [];
-  const total = latestOrder.length || 0;
-  if(total > 0){
-    const res = await roomRef.child('currentTurn').transaction(curr=>{
-      const nowCurr = Number.isInteger(curr) ? curr : 0;
-      const currPid = latestOrder[nowCurr] || null;
-      // 只有當伺服器端目前輪到的人等於我們時，才移動到下一位
-      if(currPid !== myId) return curr;
-      return (nowCurr + 1) % total;
-    });
-    // 若 transaction 未成功提交（res.committed === false），表示已被他人改過，正常不必再處理
+    // 若到達終點，寫入 winner 並結束（不再自動輪下一位）
+    if(newPos >= BOARD_SIZE-1){
+      await roomRef.child('winner').set({id: myId, name: p.name, at: now()});
+      return;
+    }
+
+    // 讀取最新版 turnOrder 並以 transaction 原子推進 currentTurn（同前）
+    const latestOrderSnap = await roomRef.child('turnOrder').once('value');
+    const latestOrder = latestOrderSnap.val() || [];
+    const total = latestOrder.length || 0;
+    if(total > 0){
+      await roomRef.child('currentTurn').transaction(curr=>{
+        const nowCurr = Number.isInteger(curr) ? curr : 0;
+        const currPid = latestOrder[nowCurr] || null;
+        if(currPid !== myId) return curr;
+        return (nowCurr + 1) % total;
+      });
+    }
+  }catch(err){
+    console.error('擲骰處理失敗', err);
+    alert('擲骰失敗：' + (err.message || err));
+  }finally{
+    // UI will be re-enabled by renderRoom when currentTurn changes,
+    // but ensure button state is consistent for error cases
+    rollBtn.disabled = !rollBtn.disabled && !localState?.started ? true : rollBtn.disabled;
   }
 });
 
