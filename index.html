@@ -228,6 +228,47 @@
   .btn-cancel{ background:#9ca3af; color:#fff }
   .btn-confirm{ background:#3b82f6; color:#fff }
 
+  /* "輪到你了" modal */
+  .yourTurnModal{
+    display:none;
+    position:fixed;
+    inset:0;
+    align-items:center;
+    justify-content:center;
+    z-index:70;
+    background:rgba(0,0,0,0.5);
+    pointer-events:none;
+  }
+  .yourTurnModal.show{
+    display:flex;
+    pointer-events:auto;
+  }
+  .yourTurnBox{
+    width: min(280px, 85%);
+    background:#fff;
+    border-radius:16px;
+    padding:24px 20px;
+    box-shadow:0 20px 60px rgba(2,6,23,0.25);
+    text-align:center;
+  }
+  .yourTurnTitle{
+    font-size:20px;
+    font-weight:800;
+    color:#111;
+    margin-bottom:16px;
+  }
+  .yourTurnBox button{
+    width:100%;
+    padding:12px;
+    font-size:15px;
+    font-weight:700;
+    border-radius:10px;
+    background:var(--accent);
+    color:white;
+    border:none;
+    box-shadow:0 4px 12px rgba(59,130,246,0.3);
+  }
+
   /* 格子標籤（cellLabel）樣式：完全置中、允許換行並以 JS 動態調整字體 */
   .cellLabel{
     position:absolute;
@@ -383,12 +424,6 @@
       </div>
     </div>
 
-    <div class="controls">
-      <div id="diceDisplay" class="log">擲骰結果：—</div>
-      <button id="rollBtn">擲骰子</button>
-      <!-- 結束回合按鈕已移除 -->
-    </div>
-
     <div style="margin-top:8px" class="log" id="log">遊戲尚未開始</div>
     <div style="margin-top:8px" class="small">提示：建立房間後，第一個加入的人為房主。房主按 <b>開始遊戲</b>（會在玩家數>1時顯示）即可開始。</div>
     <div style="margin-top:8px" id="startWrap"></div>
@@ -403,6 +438,14 @@
           <button id="pendingCancel" class="btn-cancel" style="display:none">取消</button>
           <button id="pendingConfirm" class="btn-confirm">完成</button>
         </div>
+      </div>
+    </div>
+
+    <!-- 輪到你了 modal（只在輪到該玩家且無 pending 時顯示） -->
+    <div id="yourTurnModal" class="yourTurnModal" aria-hidden="true">
+      <div class="yourTurnBox" role="dialog" aria-modal="true">
+        <div class="yourTurnTitle">輪到你了！</div>
+        <button id="rollBtn">擲骰子</button>
       </div>
     </div>
   </div>
@@ -456,7 +499,6 @@ const roomIdView = document.getElementById("roomIdView");
 const turnView = document.getElementById("turnView");
 const playersList = document.getElementById("playersList");
 const boardEl = document.getElementById("board");
-const diceDisplay = document.getElementById("diceDisplay");
 const rollBtn = document.getElementById("rollBtn");
 // const endTurnBtn = document.getElementById("endTurnBtn"); // 已移除
 const logEl = document.getElementById("log");
@@ -532,7 +574,7 @@ function renderRoom(){
   rollBtn.disabled = !isMyTurn || !localState.started;
   // endTurnBtn.disabled = !isMyTurn || !localState.started; // 已移除
 
-  diceDisplay.textContent = '擲骰結果：' + (localState.lastAction?.dice ?? '—');
+  // diceDisplay.textContent = '擲骰結果：' + (localState.lastAction?.dice ?? '—');
   // 更新右側的輪到玩家顯示（只顯示名稱）
   if(localState.started){
     turnView.textContent = `輪到 ${players[currentPlayerId]?.name || 'N/A'}`;
@@ -572,6 +614,25 @@ function renderRoom(){
     // endTurnBtn.disabled = true; // 已移除
   }
 
+  // 控制「遊戲尚未開始」log 文字顯示：遊戲開始後隱藏
+  const logEl = document.getElementById('log');
+  if(logEl){
+    if(localState.started){
+      logEl.style.display = 'none';
+    } else {
+      logEl.style.display = 'block';
+      logEl.textContent = '遊戲尚未開始';
+    }
+  }
+
+  // 控制「提示：建立房間後...」small 提示文字顯示：遊戲開始後隱藏
+  // 選取 gameUI 內最後一個 .small（即提示文字）
+  const hints = document.querySelectorAll('#gameUI .small');
+  const hintEl = hints[hints.length - 1]; // 取最後一個 small 元素
+  if(hintEl && hintEl.textContent.includes('提示：')){
+    hintEl.style.display = localState.started ? 'none' : 'block';
+  }
+
   // disable rollBtn if pendingAction exists or not your turn
   const pending = localState.pendingAction || null;
   const isPending = !!pending;
@@ -596,6 +657,22 @@ function renderRoom(){
     pendingModal.classList.add('show');
   } else {
     pendingModal.classList.remove('show');
+  }
+
+  // 控制「輪到你了」modal：只在輪到該玩家、遊戲已開始、且無 pendingAction、無 winner、且尚未擲骰時顯示
+  const yourTurnModal = document.getElementById('yourTurnModal');
+  if(yourTurnModal){
+    // 檢查 lastAction 是否為當前玩家剛擲的骰（若是則不再顯示 modal）
+    const lastAction = localState.lastAction || null;
+    const justRolled = lastAction && lastAction.by === myId && lastAction.type === 'roll';
+    
+    if(localState.started && isMyTurn && !isPending && !localState.winner && !justRolled){
+      yourTurnModal.classList.add('show');
+      rollBtn.disabled = false;
+    } else {
+      yourTurnModal.classList.remove('show');
+      rollBtn.disabled = true;
+    }
   }
 }
 
@@ -650,7 +727,7 @@ const LABELS = [
   "除了你以外的玩家各脫一件衣服",
   "撫摸對方伴侶的胸15秒",
   "愛撫對方伴侶私處20秒",
-  "所有人脫一件衣服",
+  "所有人脀一件衣服",
   "跟對方伴侶熱吻10秒",
   "對方伴侶跨坐在你身上直到下個動作",
   "舔對方伴侶奶頭10秒",
@@ -868,7 +945,7 @@ function animateDiceAndShow(face){
   });
 }
 
-// 替換原本的 rollBtn 事件處理器：先驗證回合 -> 撥放動畫 -> 寫 DB
+// 替換原本的 rollBtn 事件處理器：先驗證回合 -> 立即隱藏 modal -> 撥放動畫 -> 寫 DB
 rollBtn.addEventListener('click', async ()=>{
   if(!localState) return;
 
@@ -878,6 +955,12 @@ rollBtn.addEventListener('click', async ()=>{
   const expectedCurrent = Number.isInteger(localState.currentTurn) ? localState.currentTurn : 0;
   const currentPlayerId = serverOrder[expectedCurrent] || serverOrder[0] || null;
   if(currentPlayerId !== myId) return alert('現在不是你的回合');
+
+  // 立即隱藏「輪到你了」modal，讓骰子動畫可見
+  const yourTurnModal = document.getElementById('yourTurnModal');
+  if(yourTurnModal){
+    yourTurnModal.classList.remove('show');
+  }
 
   // disable UI immediately to prevent multiple clicks
   rollBtn.disabled = true;
@@ -1128,7 +1211,7 @@ pendingCancel.addEventListener('click', async ()=>{
   try{ await roomRef.child('pendingAction').set(null); }catch(e){ console.warn(e); }
 });
 
-// ------- auto-fit labels helper (paste here) -------
+/* ------- auto-fit labels helper (paste here) ------- */
 function debounce(fn, wait=120){
   let t;
   return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn(...args), wait); };
