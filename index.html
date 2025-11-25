@@ -30,21 +30,69 @@
   .cell{
     background:#f6f7fb;
     border-radius:8px;
-    aspect-ratio:1/1;           /* 讓格子保持正方形 */
+    aspect-ratio:1/1;
     display:flex;
     align-items:center;
     justify-content:center;
     position:relative;
     font-weight:600;
     color:#333;
-    overflow:visible;           /* 允許箭頭超出格子邊界不被裁切 */
-    z-index:1;                  /* 讓箭頭（較高 z）可以蓋過相鄰格子 */
+    overflow:visible;
+    z-index:1;
     padding:6px;
     box-sizing:border-box;
   }
+  /* 第一格（起點）背景色 */
+  .cell[data-idx="0"]{
+    background:#FFFD73;
+  }
+  /* 最後一格（終點）背景色 */
+  .cell[data-idx="49"]{
+    background:#7AFF95;
+  }
   .cell .idx{ display:none; }
-  .pieces{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
-  .piece{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700}
+  .pieces{
+    display:flex;
+    flex-wrap:wrap;
+    gap:3px;
+    justify-content:center;
+    align-items:center;
+    width:100%;
+    max-width:64px;
+    margin:auto;
+    position:relative;
+    z-index:10; /* 提高棋子容器層級，蓋過 cellLabel */
+  }
+  /* 當有 2+ 個棋子時改為 grid 2x2 排列 */
+  .pieces:has(.piece:nth-child(2)){
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+  }
+  .piece{
+    width:28px;
+    height:28px;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:white;
+    font-weight:700;
+    font-size:13px;
+    box-sizing:border-box;
+    position:relative;
+    z-index:11; /* 確保每個棋子也在文字上方 */
+  }
+  /* 當有 3+ 個棋子時，縮小並確保 2x2 排列 */
+  .pieces:has(.piece:nth-child(3)) .piece{
+    width:24px;
+    height:24px;
+    font-size:11px;
+  }
+  .pieces:has(.piece:nth-child(5)) .piece{
+    width:20px;
+    height:20px;
+    font-size:10px;
+  }
   .controls{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:8px}
   .log{font-size:13px;color:var(--muted);padding:8px;border-radius:8px}
   .players{display:flex;gap:8px;overflow:auto;padding:6px}
@@ -194,6 +242,7 @@
     overflow:hidden;
     display:block;
     line-height:1.1;
+    z-index:5; /* 文字層級低於棋子 */
   }
 
   .dirArrow{
@@ -359,11 +408,6 @@
 
   <!-- Dice overlay element -->
   <div id="diceOverlay">
-    <div class="diceBox" id="diceResult">🎲</div>
-  </div>
-
-</div>
-
 <script>
 /* ============================
   Firebase config - 填入你的專案資訊
@@ -602,7 +646,7 @@ const LABELS = [
   "除了你以外的玩家各脫一件衣服",
   "撫摸對方伴侶的胸15秒",
   "愛撫對方伴侶私處20秒",
-  "所有人脀一件衣服",
+  "所有人脫一件衣服",
   "跟對方伴侶熱吻10秒",
   "對方伴侶跨坐在你身上直到下個動作",
   "舔對方伴侶奶頭10秒",
@@ -612,7 +656,7 @@ const LABELS = [
   "幫對方伴侶口交20秒",
   "你的伴侶幫對方口交20秒",
   "跟對方伴侶69式30秒",
-  "到達終點的贏家可指定動作",
+  "終點",
 ];
 
 // 用程式端 LABELS 清單來填入格子文字中間的方向箭頭（不提供畫面編輯器）
@@ -1014,7 +1058,7 @@ window.addEventListener('load', async ()=>{
 db.ref().child('rooms').on('child_changed', snap=>{
   const val = snap.val();
   if(val && val.winner){
-    alert('遊戲結束！得勝者：' + val.winner.name);
+    alert('遊戲結束！贏家' + val.winner.name + '可指定所有玩家做任意指定動作');
   }
 });
 
