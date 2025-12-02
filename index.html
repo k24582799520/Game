@@ -665,6 +665,15 @@ function renderRoom(){
     pendingModal.classList.remove('show');
   }
 
+  // 顯示贏家訊息（只對該房間的玩家）
+  if(localState.winner && !window._winnerShownForRoom){
+    // 標記已顯示過，避免重複彈窗
+    window._winnerShownForRoom = true;
+    setTimeout(()=>{
+      alert(`遊戲結束！贏家 ${localState.winner.name} 可指定所有玩家做任意指定動作`);
+    }, 200);
+  }
+
   // 控制「輪到你了」modal：只在輪到該玩家、遊戲已開始、且無 pendingAction、無 winner、且尚未擲骰時顯示
   const yourTurnModal = document.getElementById('yourTurnModal');
   if(yourTurnModal){
@@ -859,6 +868,9 @@ joinBtn.addEventListener("click", async ()=>{
 async function joinRoom(rid, playerId, playerName, isOwner){
   roomRef = db.ref('rooms/'+rid);
   
+  // 初始化贏家訊息顯示標記（全域變數，跨 renderRoom 保留）
+  window._winnerShownForRoom = false;
+  
   // 讀取目前房間內所有玩家已使用的顏色
   const snap = await roomRef.child('players').once('value');
   const existingPlayers = snap.val() || {};
@@ -897,6 +909,10 @@ async function joinRoom(rid, playerId, playerName, isOwner){
       alert("房間不存在或已刪除。");
       cleanup();
       return;
+    }
+    // 重置贏家訊息標記（當 winner 從有變無時，例如再來一場）
+    if(!localState.winner && window._winnerShownForRoom){
+      window._winnerShownForRoom = false;
     }
     renderRoom();
   });
@@ -1170,6 +1186,25 @@ function cleanup(){
 /* ---------- initial board build ---------- */
 buildBoard();
 
+/* ========== 開發測試模式：快速跳到終點附近 ==========
+// 在正式上線前請刪除此區塊
+const testModeBtn = document.createElement('button');
+testModeBtn.textContent = '🧪 測試：跳到終點前';
+testModeBtn.style.cssText = 'position:fixed;top:10px;right:10px;z-index:999;background:#ff6b6b;color:white;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+testModeBtn.onclick = async ()=>{
+  if(!roomRef || !myId || !localState) return alert('請先加入房間');
+  
+  // 直接將當前玩家設到第 47 格（距離終點 2 格，方便測試）
+  try{
+    await roomRef.child(`players/${myId}/pos`).set(47);
+    alert('已跳到第 47 格（距離終點 2 格），可以開始測試終點訊息');
+  }catch(e){
+    alert('跳轉失敗：' + e.message);
+  }
+};
+document.body.appendChild(testModeBtn);
+ ========== 測試模式結束 ========== */
+
 /* ---------- auto-join if URL contains room=... ---------- */
 window.addEventListener('load', async ()=>{
   const m = location.hash.match(/room=(\d{4})/);
@@ -1199,13 +1234,6 @@ window.addEventListener('load', async ()=>{
   }
 });
 
-/* ---------- observe winner ---------- */
-db.ref().child('rooms').on('child_changed', snap=>{
-  const val = snap.val();
-  if(val && val.winner){
-    alert('遊戲結束！贏家' + val.winner.name + '可指定所有玩家做任意指定動作');
-  }
-});
 
 // pending confirm handler: only the landing player can confirm, then advance turn
 pendingConfirm.addEventListener('click', async ()=>{
@@ -1221,8 +1249,10 @@ pendingConfirm.addEventListener('click', async ()=>{
     console.warn('failed to clear pendingAction', e);
   }
 
-  // if game already has winner, do not advance turn
-  if(localState.winner) return;
+  // if game already has winner, do not advance turn (also skip showing alert again)
+  if(localState.winner){
+    return;
+  }
 
   // advance currentTurn atomically
   try{
@@ -1238,15 +1268,6 @@ pendingConfirm.addEventListener('click', async ()=>{
   }catch(e){
     console.warn('failed to advance turn', e);
   }
-});
-
-// optional: allow owner cancel pending (if you want a cancel flow), currently hide cancel
-pendingCancel.addEventListener('click', async ()=>{
-  // optional admin cancel path - left disabled in UI
-  if(!roomRef || !localState) return;
-  const ownerId = localState.ownerId;
-  if(ownerId !== myId) return alert('只有房主可以取消等待。');
-  try{ await roomRef.child('pendingAction').set(null); }catch(e){ console.warn(e); }
 });
 
 /* ------- auto-fit labels helper (paste here) ------- */
