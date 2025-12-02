@@ -7,6 +7,7 @@
 <!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <style>
   :root{--bg:#faf9f7;--card:#ffffff;--accent:#5b8cff;--muted:#666;--dice-size:96px;}
   html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans TC",sans-serif;background:var(--bg);color:#111}
@@ -476,6 +477,11 @@ if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("REPLACE")) {
 
 // init firebase
 firebase.initializeApp(firebaseConfig);
+// 啟動匿名登入（一定要在 initializeApp 後）
+firebase.auth().signInAnonymously()
+  .then(() => console.log("匿名登入成功"))
+  .catch(err => console.error("匿名登入失敗", err));
+
 const db = firebase.database();
 
 /* ---------- game settings ---------- */
